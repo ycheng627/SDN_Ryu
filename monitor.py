@@ -15,7 +15,7 @@ class SimpleMonitor13(controller.SimpleSwitch13):
         self.datapaths = {}
         self.monitor_thread = hub.spawn(self._monitor)
         self.record = {}
-        self.threshold = 1000000
+        self.threshold = 1e6
 
     @set_ev_cls(ofp_event.EventOFPStateChange,
                 [MAIN_DISPATCHER, DEAD_DISPATCHER])
@@ -80,7 +80,7 @@ class SimpleMonitor13(controller.SimpleSwitch13):
         dpid = ev.msg.datapath.id
 
         if dpid not in self.record:
-            self.record[dpid] = {}
+            self.record[dpid] = defaultdict(int)
         
         self.logger.info('datapath '
                 'in-port  src_ip        src_port dst_ip        dst_port proto'
@@ -149,31 +149,33 @@ class SimpleMonitor13(controller.SimpleSwitch13):
             in_port = stat.match['in_port']
             out_port = stat.instructions[0].actions[0].port
 
-            
             protocol = 'TCP' if stat.match['tcp_src'] is not None else 'UDP'
+
             if protocol == 'TCP':
-                self.logger.info('%8x %8x %14s %6d %14s %6d %5s %8x %8d %8d',
+                key = (in_port, out_port, stat.match['ipv4_src'], stat.match['tcp_src'],
+                       stat.match['ipv4_dst'], stat.match['tcp_dst'], 'TCP')
+                previous_transmit_amount = self.record[dpid][key]
+
+                self.logger.info('%8x %8x %14s %6d %14s %6d %5s %8x %8d %8d %8d',
                         dpid, stat.match['in_port'], 
                         stat.match['ipv4_src'], stat.match['tcp_src'],
                         stat.match['ipv4_dst'], stat.match['tcp_dst'], 'TCP',
-                        out_port, stat.packet_count, transmit_amount)
+                        out_port, stat.packet_count, transmit_amount, previous_transmit_amount)
             elif protocol == 'UDP':
-                self.logger.info('%8x %8x %14s %8d %14s %8d %5s %8x %8d %8d',
+                key = (in_port, out_port, stat.match['ipv4_src'], stat.match['udp_src'],
+                       stat.match['ipv4_dst'], stat.match['udp_dst'], 'TCP')
+                previous_transmit_amount = self.record[dpid][key]
+
+                self.logger.info('%8x %8x %14s %8d %14s %8d %5s %8x %8d %8d %8d',
                         dpid, stat.match['in_port'], 
                         stat.match['ipv4_src'], stat.match['udp_src'],
                         stat.match['ipv4_dst'], stat.match['udp_dst'], 'UDP',
-                        out_port, stat.packet_count, transmit_amount)
-
-            # self.logger.info('%016x %8x %17s %8x %8d %8d',
-            #         dpid, in_port,
-            #         stat.match['eth_dst'], out_port,
-            #         stat.packet_count, transmit_amount)
+                        out_port, stat.packet_count, transmit_amount, previous_transmit_amount)
             
             if in_port == out_port:
                 grow_list.append(0)
                 continue
 
-            key = (in_port, out_port)
             local_record[key] = transmit_amount
 
             if key in self.record[dpid]:
@@ -184,6 +186,7 @@ class SimpleMonitor13(controller.SimpleSwitch13):
             
             grow_list.append(grow_amount)
             group_dict[out_port].append(idx)
+        
 
         for group_key, group in group_dict.items():
 
